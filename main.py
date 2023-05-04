@@ -1,167 +1,121 @@
-from datasets import load_dataset
-from datasets import Dataset
-from transformers import ViTImageProcessor
-from torchvision.transforms import CenterCrop, Compose, Normalize, RandomHorizontalFlip, RandomResizedCrop, Resize, ToTensor
-from torch.utils.data import DataLoader
-from transformers import ViTForImageClassification, AdamW
 import torch
-import torch.nn as nn
-import pytorch_lightning as pl
-from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import EarlyStopping
-from pytorch_lightning.callbacks import ModelCheckpoint
+import torchvision.transforms as transforms
+import timm
 import os
-import pandas as pd
-import numpy as np
+from tkinter import filedialog
+from tkinter import *
+from PIL import ImageTk, Image
 
-# Определение устройства для обучения (GPU или CPU)
+# Переводим вычисления на GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-print(device)
+# Для перевода id в соответствующий класс
+root_path = r'C:\Users\Oleg\Desktop\Caltech256\test'
+labels = [f for f in os.listdir(root_path) if os.path.isdir(os.path.join(root_path, f))]
+label2id, id2label = dict(), dict()
+for i, label in enumerate(labels):
+    label2id[label] = i
+    id2label[i] = label
 
-train_path = r"C:\Users\Oleg\Desktop\Caltech256\train"
-test_path = r"C:\Users\Oleg\Desktop\Caltech256\test"
-val_path = r"C:\Users\Oleg\Desktop\Caltech256\valid"
-root_path = r"C:\Users\Oleg\Desktop\Caltech256"
+# Загружаем модель
+model = torch.load(r'C:\Users\Oleg\Desktop\CW\models\deit_tiny_distilled_patch16_224-caltech256-e10-lr0001-t79.pt')
+model.eval()
 
-datast = load_dataset(root_path)
+# Предобработка изображения
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.RandomResizedCrop(224),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
 
-train_ds = datast["train"]
-test_ds = datast["test"]
-val_ds = datast["validation"]
+def prepareImage(image):
+    image_tensor = transform(image)
+    image_tensor = image_tensor.unsqueeze(0)
+    image_tensor = image_tensor.to(device)
+    return image_tensor
 
-id2label = {id:label for id, label in enumerate(train_ds.features['label'].names)}
-label2id = {label:id for id,label in id2label.items()}
+# Функция передает тенсор изображения в модель для предсказания
+def predict(image_tensor, model):
+    with torch.no_grad():
+        output = model(image_tensor)
+    _, predicted = torch.max(output.data, 1)
+    return predicted.item()
 
-# Загружаем предобученную модель vit-base-patch16-224-in21k ViTForImageClassification
-processor = ViTImageProcessor.from_pretrained("facebook/dino-vits8")
-image_mean = processor.image_mean
-image_std = processor.image_std
-size = processor.size["height"]
-print("mean:", image_mean, "std:", image_std, "size:", size)
-# mean, std и size берем из предобученной модели, чтоб трансформировать новые данные
-
-normalize = Normalize(mean=image_mean, std=image_std)
-_train_transforms = Compose([
-            RandomResizedCrop(size),
-            RandomHorizontalFlip(),
-            ToTensor(),
-            normalize,]
-    )
-
-_test_val_transforms = Compose([
-            Resize(size),
-            CenterCrop(size),
-            ToTensor(),
-            normalize,]
-    )
-
-def train_transforms(examples):
-    examples['pixel_values'] = [_train_transforms(image.convert("RGB")) for image in examples['image']]
-    return examples
-
-def test_val_transforms(examples):
-    examples['pixel_values'] = [_test_val_transforms(image.convert("RGB")) for image in examples['image']]
-    return examples
-
-train_ds.set_transform(train_transforms)
-val_ds.set_transform(test_val_transforms)
-test_ds.set_transform(test_val_transforms)
+test_img = r'C:\Users\Oleg\Desktop\Caltech256\test\012.binoculars\012_0001.jpg'
 
 
-# Создаем DataLoaders
-def collate_fn(examples):
-    pixel_values = torch.stack([example["pixel_values"] for example in examples])
-    labels = torch.tensor([example["label"] for example in examples])
-    return {"pixel_values": pixel_values, "labels": labels}
+# Функция для изменения размера изображения
+def resize_image(image):
+    # Получаем текущий размер изображения
+    width, height = image.size
 
-train_batch_size = 2
-eval_batch_size = 2
+    # Вычисляем соотношение сторон
+    ratio = min(500 / width, 500 / height)
 
-train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=collate_fn, batch_size=train_batch_size)
-val_dataloader = DataLoader(val_ds, collate_fn=collate_fn, batch_size=eval_batch_size)
-test_dataloader = DataLoader(test_ds, collate_fn=collate_fn, batch_size=eval_batch_size)
+    # Вычисляем новый размер изображения
+    new_size = (int(width * ratio), int(height * ratio))
 
-batch = next(iter(train_dataloader))
-for k,v in batch.items():
-  if isinstance(v, torch.Tensor):
-    print(k, v.shape)
+    # Изменяем размер изображения
+    resized_image = image.resize(new_size)
 
+    return resized_image
 
-class ViTLightningModule(pl.LightningModule):
-    def __init__(self, num_labels=257):
-        super(ViTLightningModule, self).__init__()
-        self.vit = ViTForImageClassification.from_pretrained('facebook/dino-vits8',
-                                                             num_labels=257,
-                                                             id2label=id2label,
-                                                             label2id=label2id)
+# Функция для выбора изображения
+def choose_image():
+    # Открываем диалоговое окно для выбора файла
+    file_path = filedialog.askopenfilename()
 
-    def forward(self, pixel_values):
-        outputs = self.vit(pixel_values=pixel_values)
-        return outputs.logits
+    # Открываем изображение
+    image = Image.open(file_path)
 
-    def common_step(self, batch, batch_idx):
-        pixel_values = batch['pixel_values']
-        labels = batch['labels']
-        logits = self(pixel_values)
+    # Изменяем размер изображения
+    resized_image = resize_image(image)
 
-        criterion = nn.CrossEntropyLoss()
-        loss = criterion(logits, labels)
-        predictions = logits.argmax(-1)
-        correct = (predictions == labels).sum().item()
-        accuracy = correct / pixel_values.shape[0]
+    # Создаем объект PhotoImage для отображения изображения в окне
+    image_tk = ImageTk.PhotoImage(resized_image)
 
-        return loss, accuracy
+    # Обновляем виджет Label для отображения нового изображения
+    label.configure(image=image_tk)
+    label.image = image_tk
 
-    def training_step(self, batch, batch_idx):
-        loss, accuracy = self.common_step(batch, batch_idx)
-        self.log("training_loss", loss)
-        self.log("training_accuracy", accuracy)
+    # Обновляем подпись с путем к файлу
+    file_label.configure(text="Выбранный файл: " + file_path)
 
-        return loss
+    # Готовим тензор для подачи в модель
+    image_tensor = prepareImage(image)
 
-    def validation_step(self, batch, batch_idx):
-        loss, accuracy = self.common_step(batch, batch_idx)
-        self.log("validation_loss", loss, on_epoch=True)
-        self.log("validation_accuracy", accuracy, on_epoch=True)
+    # Передаем объект в модель
+    pred = predict(image_tensor, model)
+    pred = id2label[pred]
 
-        return loss
+    # Выводим предсказанный класс модели
+    prediction.configure(text= "predicted class: " + pred)
 
-    def test_step(self, batch, batch_idx):
-        loss, accuracy = self.common_step(batch, batch_idx)
+root = Tk()
+root.geometry("600x600")
+root.title("Выберите изображение")
 
-        return loss
+# Создаем кнопку для повторного выбора изображения
+button = Button(root, text="Выбрать изображение", command=choose_image)
+button.pack()
 
-    def configure_optimizers(self):
-        return AdamW(self.parameters(), lr=5e-5)
+# Создаем начальную подпись с инструкцией
+initial_label = Label(root, text="Нажмите на кнопку, чтобы выбрать изображение")
+initial_label.pack()
 
-    def train_dataloader(self):
-        return train_dataloader
+# Создаем пустой виджет Label для отображения изображения
+label = Label(root)
+label.pack()
 
-    def val_dataloader(self):
-        return val_dataloader
+# Создаем пустую подпись для отображения пути к файлу
+file_label = Label(root)
+file_label.pack()
 
-    def test_dataloader(self):
-        return test_dataloader
+# Создаем пустую подпись для отображения
+prediction = Label()
+prediction.pack()
 
-
-early_stop_callback = EarlyStopping(
-    monitor='val_loss',
-    patience=3,
-    strict=False,
-    verbose=False,
-    mode='min'
-)
-
-checkpoint_callback = ModelCheckpoint(
-    monitor='val_loss',
-    dirpath='/content/drive/MyDrive/Caltech256/models',
-    filename='model-{epoch:02d}-{val_loss:.2f}',
-    save_top_k=3,
-    mode='min'
-)
-
-model = ViTLightningModule()
-trainer = Trainer(accelerator = "gpu", callbacks=[EarlyStopping(monitor='validation_loss'), checkpoint_callback], max_epochs=10)
-trainer.fit(model, train_dataloader, val_dataloader)
+root.mainloop()
 
