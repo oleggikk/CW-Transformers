@@ -4,8 +4,12 @@ import timm
 import os
 from tkinter import filedialog
 from tkinter import *
+from tkinter.ttk import Combobox
 from PIL import ImageTk, Image
-
+#import torchvision
+#print(torch.__version__)
+#print(torchvision.__version__)
+#print(timm.__version__)
 
 # получаем путь к директории, в которой находится запущенный скрипт
 script_dir = os.path.dirname(__file__)
@@ -48,7 +52,7 @@ for i, label in enumerate(labels):
     id2label[i] = label
 
 # Загружаем модель
-model = torch.load(script_dir + "\deit_tiny_distilled_patch16_224-caltech256-e10-lr0001-t79.pt")
+model = torch.load(script_dir + r'\deit_tiny_distilled_patch16_224-caltech256.pt')
 model.eval()
 
 # Предобработка изображения
@@ -73,9 +77,6 @@ def predict(image_tensor, model):
     _, predicted = torch.max(output.data, 1)
     return predicted.item()
 
-test_img = r'C:\Users\Oleg\Desktop\Caltech256\test\012.binoculars\012_0001.jpg'
-
-
 # Функция для изменения размера изображения
 def resize_image(image):
     # Получаем текущий размер изображения
@@ -91,6 +92,7 @@ def resize_image(image):
     resized_image = image.resize(new_size)
 
     return resized_image
+
 
 # Функция для выбора изображения
 def choose_image():
@@ -123,9 +125,44 @@ def choose_image():
     # Выводим предсказанный класс модели
     prediction.configure(text= "predicted class: " + pred)
 
+# Функция для выбора нейросетевой модели
+def choose_model():
+    # Создаем окно для выбора модели
+    model_window = Toplevel(root)
+    model_window.title("Выбрать модель")
+    model_window.geometry("300x130")
+
+    # Определяем доступные модели
+    models = ['deit_tiny_distilled_patch16_224-caltech256.pt', 'eficcientformer_l1-caltech256.pt', 'mobilevits-caltech256.pt',
+              'swin_s3_tiny_224-caltech256.pt', 'swin_tiny_patch4_window7_224-caltech256.pt', 'vit_small_patch16_224-caltech256.pt']
+
+    # Создаем выпадающий список
+    model_combobox = Combobox(model_window, values=models, state='readonly')
+    model_combobox.current(0)
+    model_combobox.pack()
+
+    # Функция для закрытия окна выбора модели и возврата выбранной модели
+    def close_window():
+        chosen_model = model_combobox.get()
+        model_window.destroy()
+        global model
+        model = torch.load(script_dir + '\\' + chosen_model)
+        model.eval()
+        model_name .configure(text="Выбранная модель: " + chosen_model)
+        return chosen_model
+
+    # Создаем кнопку "Ок"
+    ok_button = Button(model_window, text="Ок", command=close_window)
+    ok_button.pack()
+
+    # Ожидаем закрытия окна выбора модели
+    root.wait_window(model_window)
+
+    return close_window()
+
 root = Tk()
-root.geometry("600x600")
-root.title("Выберите изображение")
+root.geometry("600x700")
+root.title("Predict Caltech256 class")
 
 # Создаем кнопку для повторного выбора изображения
 button = Button(root, text="Выбрать изображение", command=choose_image)
@@ -147,5 +184,13 @@ file_label.pack()
 prediction = Label()
 prediction.pack()
 
+# Создаем кнопку для выбора нейросетевой модели
+model_button = Button(root, text="Выбрать нейросетевую модель", command=choose_model)
+model_button.pack()
+
+model_name = Label(text="Выбранная модель: " + "deit_tiny_distilled_patch16_224-caltech256.pt")
+model_name.pack()
+
 root.mainloop()
+
 
